@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Staff Portal — The Purr-fect Paw</title>
+  <meta name="description" content="Staff portal for The Purr-fect Paw employees" />
+  <meta name="theme-color" content="#3a6fc4" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="assets/images/logo.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+
+  <!-- Firebase v10 -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import { getFirestore, doc, setDoc, getDoc, addDoc, collection,
+      query, where, orderBy, getDocs, updateDoc, serverTimestamp, Timestamp }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBguDqOjwe3f2Vx1xr9luHrsAu5_aIfs2U",
+      authDomain: "staff-b39ed.firebaseapp.com",
+      projectId: "staff-b39ed",
+      storageBucket: "staff-b39ed.firebasestorage.app",
+      messagingSenderId: "447822822751",
+      appId: "1:447822822751:web:3c00ed09ec0865e2b60aea"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    // ─── Pay Period Helpers ───────────────────────────────────────────────────
+    function getPeriodId(date) {
+      // Bi-weekly starting May 24, 2026
+      const anchor = new Date("2026-05-24T00:00:00");
+      const d = new Date(date);
+      d.setHours(0,0,0,0);
+      const diff = Math.floor((d - anchor) / (14 * 86400000));
+      const start = new Date(anchor.getTime() + diff * 14 * 86400000);
+      const end = new Date(start.getTime() + 13 * 86400000);
+      return {
+        id: `${fmt(start)}_${fmt(end)}`,
+        start, end,
+        label: `${fmtDisplay(start)} – ${fmtDisplay(end)}`
+      };
+    }
+    function fmt(d) { return d.toISOString().slice(0,10); }
+    function fmtDisplay(d) {
+      return d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
+    }
+    function fmtTime(ts) {
+      if (!ts) return "—";
+      const d = ts.toDate ? ts.toDate() : new Date(ts);
+      return d.toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit" });
+    }
+    function fmtDate(ts) {
+      if (!ts) return "—";
+      const d = ts.toDate ? ts.toDate() : new Date(ts);
+      return d.toLocaleDateString("en-US", { month:"short", day:"numeric" });
+    }
+    function hoursFromMs(ms) { return (ms / 3600000).toFixed(2); }
+    function pay(hours, rate) { return (parseFloat(hours) * parseFloat(rate)).toFixed(2); }
+
+    // ─── State ────────────────────────────────────────────────────────────────
+    let currentUser = null;
+    let userProfile = null;
+    let activeClockEntry = null;
+
+    // ─── Auth ─────────────────────────────────────────────────────────────────
+    onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        currentUser = user;
+        userProfile = await loadProfile(user.uid);
+        if (!userProfile) {
+          // First login — create basic profile
+          userProfile = { name: user.email.split("@")[0], email: user.email, role: "employee", hourlyRate: 0 };
+          await setDoc(doc(db, "users", user.uid), userProfile);
+        }
+        activeClockEntry = await getActiveClockEntry(user.uid);
+        showApp();
+      } else {
+        currentUser = null;
+        userProfile = null;
+        showLogin();
+      }
+    });
+
+    async function loadProfile(uid) {
+      const snap = await getDoc(doc(db, "users", uid));
+      return snap.exists() ? snap.data() : null;
+    }
+
+    async function getActiveClockEntry(uid) {
+      const q = query(collection(db, "clockEntries"),
+        where("uid", "==", uid), where("clockOut", "==", null));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const d = snap.docs[0];
+        return { id: d.id, ...d.data() };
+      }
+      return null;
+    }
+
+    // ─── Login ────────────────────────────────────────────────────────────────
+    window.handleLogin = async () => {
+      const email = document.getElementById("email").value.trim();
+      const password = document.getElementById("password").value;
+      const err = document.getElementById("login-error");
+      err.textContent = "";
+      try {
+        await signInWithEmailAndPassword(auth, email, password);
+      } catch (e) {
+        err.textContent = "Invalid email or password. Please try again.";
+      }
+    };
+
+    window.handleLogout = async () => {
+      await signOut(auth);
+    };
+
+    // ─── Clock In / Out ───────────────────────────────────────────────────────
+    window.handleClockToggle = async () => {
+      const btn = document.getElementById("clock-btn");
+      btn.disabled = true;
+
+      if (!activeClockEntry) {
+        // Clock IN
+        const entry = {
+          uid: currentUser.uid,
+          name: userProfile.name,
+          clockIn: serverTimestamp(),
+          clockOut: null,
+          totalMs: null
+        };
+        const ref = await addDoc(collection(db, "clockEntries"), entry);
+        activeClockEntry = { id: ref.id, ...entry, clockIn: Timestamp.now() };
+        updateClockUI();
+      } else {
+        // Clock OUT
+        const now = Timestamp.now();
+        const inMs = activeClockEntry.clockIn.toMillis ? activeClockEntry.clockIn.toMillis() : activeClockEntry.clockIn.seconds * 1000;
+        const totalMs = now.toMillis() - inMs;
+        await updateDoc(doc(db, "clockEntries", activeClockEntry.id), {
+          clockOut: serverTimestamp(),
+          totalMs
+        });
+        activeClockEntry = null;
+        updateClockUI();
+        await loadRecentEntries();
+      }
+      btn.disabled = false;
+    };
+
+    function updateClockUI() {
+      const btn = document.getElementById("clock-btn");
+      const status = document.getElementById("clock-status");
+      const timeDisplay = document.getElementById("clock-time-display");
+
+      if (activeClockEntry) {
+        btn.textContent = "Clock Out";
+        btn.className = "clock-btn out";
+        const inTime = fmtTime(activeClockEntry.clockIn);
+        status.textContent = `Clocked in since ${inTime}`;
+        status.className = "clock-status active";
+        startTimer(activeClockEntry.clockIn);
+        timeDisplay.style.display = "block";
+      } else {
+        btn.textContent = "Clock In";
+        btn.className = "clock-btn in";
+        status.textContent = "Not clocked in";
+        status.className = "clock-status";
+        stopTimer();
+        timeDisplay.style.display = "none";
+      }
+    }
+
+    // Live timer
+    let timerInterval = null;
+    function startTimer(clockIn) {
+      stopTimer();
+      function tick() {
+        const inMs = clockIn.toMillis ? clockIn.toMillis() : clockIn.seconds * 1000;
+        const elapsed = Date.now() - inMs;
+        const h = Math.floor(elapsed / 3600000);
+        const m = Math.floor((elapsed % 3600000) / 60000);
+        const s = Math.floor((elapsed % 60000) / 1000);
+        document.getElementById("timer").textContent =
+          `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+      }
+      tick();
+      timerInterval = setInterval(tick, 1000);
+    }
+    function stopTimer() {
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = null;
+    }
+
+    // ─── Load Data ────────────────────────────────────────────────────────────
+    async function loadRecentEntries() {
+      const q = query(collection(db, "clockEntries"),
+        where("uid", "==", currentUser.uid),
+        where("clockOut", "!=", null),
+        orderBy("clockOut", "desc"));
+      const snap = await getDocs(q);
+      const entries = snap.docs.map(d => ({ id: d.id, ...d.data() })).slice(0, 10);
+      renderRecentEntries(entries);
+    }
+
+    async function loadCurrentPeriodSummary() {
+      const period = getPeriodId(new Date());
+      const q = query(collection(db, "clockEntries"),
+        where("uid", "==", currentUser.uid),
+        where("clockOut", "!=", null),
+        orderBy("clockOut", "desc"));
+      const snap = await getDocs(q);
+      let totalMs = 0;
+      snap.docs.forEach(d => {
+        const data = d.data();
+        const co = data.clockOut?.toDate ? data.clockOut.toDate() : null;
+        if (co && co >= period.start && co <= new Date(period.end.getTime() + 86400000)) {
+          totalMs += data.totalMs || 0;
+        }
+      });
+      const hours = parseFloat(hoursFromMs(totalMs));
+      const rate = userProfile?.hourlyRate || 0;
+      document.getElementById("period-label").textContent = period.label;
+      document.getElementById("period-hours").textContent = hours.toFixed(2);
+      document.getElementById("period-pay").textContent = `$${pay(hours, rate)}`;
+      document.getElementById("period-rate").textContent = `$${parseFloat(rate).toFixed(2)}/hr`;
+    }
+
+    async function loadPayHistory() {
+      if (userProfile?.role !== "owner") {
+        const q = query(collection(db, "payPeriods"),
+          where(`employees.${currentUser.uid}.approved`, "==", true),
+          orderBy("endDate", "desc"));
+        try {
+          const snap = await getDocs(q);
+          const periods = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          renderPayHistory(periods);
+        } catch(e) {
+          renderPayHistory([]);
+        }
+      } else {
+        // Owner: load all periods
+        const q = query(collection(db, "payPeriods"), orderBy("endDate", "desc"));
+        try {
+          const snap = await getDocs(q);
+          renderAdminPayPeriods(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        } catch(e) {}
+      }
+    }
+
+    // ─── Admin: Load All Employees ─────────────────────────────────────────
+    async function loadAdminDashboard() {
+      const snap = await getDocs(collection(db, "users"));
+      const users = snap.docs.map(d => ({ uid: d.id, ...d.data() }))
+        .filter(u => u.role !== "owner");
+      renderAdminDashboard(users);
+    }
+
+    async function loadAdminCurrentPeriod() {
+      const period = getPeriodId(new Date());
+      const q = query(collection(db, "clockEntries"),
+        where("clockOut", "!=", null),
+        orderBy("clockOut", "desc"));
+      const snap = await getDocs(q);
+
+      const byUser = {};
+      snap.docs.forEach(d => {
+        const data = d.data();
+        const co = data.clockOut?.toDate ? data.clockOut.toDate() : null;
+        if (co && co >= period.start && co <= new Date(period.end.getTime() + 86400000)) {
+          if (!byUser[data.uid]) byUser[data.uid] = { name: data.name, totalMs: 0 };
+          byUser[data.uid].totalMs += data.totalMs || 0;
+        }
+      });
+
+      // Get rates
+      const usersSnap = await getDocs(collection(db, "users"));
+      usersSnap.docs.forEach(d => {
+        const uid = d.id;
+        if (byUser[uid]) byUser[uid].rate = d.data().hourlyRate || 0;
+      });
+
+      renderAdminCurrentPeriod(byUser, period);
+    }
+
+    // ─── Render Functions ─────────────────────────────────────────────────────
+    function renderRecentEntries(entries) {
+      const el = document.getElementById("recent-entries");
+      if (!entries.length) {
+        el.innerHTML = `<p class="empty-state">No entries yet — clock in to get started!</p>`;
+        return;
+      }
+      el.innerHTML = entries.map(e => {
+        const ms = e.totalMs || 0;
+        const hrs = hoursFromMs(ms);
+        const rate = userProfile?.hourlyRate || 0;
+        return `
+        <div class="entry-row">
+          <div class="entry-date">${fmtDate(e.clockOut)}</div>
+          <div class="entry-times">${fmtTime(e.clockIn)} – ${fmtTime(e.clockOut)}</div>
+          <div class="entry-hours">${hrs} hrs</div>
+          <div class="entry-pay">$${pay(hrs, rate)}</div>
+        </div>`;
+      }).join("");
+    }
+
+    function renderPayHistory(periods) {
+      const el = document.getElementById("pay-history");
+      if (!periods.length) {
+        el.innerHTML = `<p class="empty-state">No approved paychecks yet.</p>`;
+        return;
+      }
+      el.innerHTML = periods.map(p => {
+        const emp = p.employees?.[currentUser.uid];
+        if (!emp) return "";
+        return `
+        <div class="paycheck-row">
+          <div class="paycheck-period">${p.label || p.id}</div>
+          <div class="paycheck-hours">${parseFloat(emp.hoursWorked || 0).toFixed(2)} hrs</div>
+          <div class="paycheck-total">$${parseFloat(emp.total || 0).toFixed(2)}</div>
+          <div class="paycheck-badge approved">Approved</div>
+        </div>`;
+      }).join("");
+    }
+
+    function renderAdminDashboard(users) {
+      const el = document.getElementById("admin-employees");
+      if (!users.length) {
+        el.innerHTML = `<p class="empty-state">No employees found.</p>`;
+        return;
+      }
+      el.innerHTML = users.map(u => `
+        <div class="employee-row">
+          <div class="employee-name">${u.name || u.email}</div>
+          <div class="employee-email">${u.email}</div>
+          <div class="employee-rate">
+            <span>$</span>
+            <input type="number" class="rate-input" value="${u.hourlyRate || 0}"
+              onchange="updateRate('${u.uid}', this.value)" step="0.25" min="0" />
+            <span>/hr</span>
+          </div>
+        </div>`).join("");
+    }
+
+    function renderAdminCurrentPeriod(byUser, period) {
+      const el = document.getElementById("admin-period-summary");
+      document.getElementById("admin-period-label").textContent = period.label;
+      const entries = Object.entries(byUser);
+      if (!entries.length) {
+        el.innerHTML = `<p class="empty-state">No hours logged this period.</p>`;
+        return;
+      }
+      let grandTotal = 0;
+      el.innerHTML = entries.map(([uid, data]) => {
+        const hrs = parseFloat(hoursFromMs(data.totalMs));
+        const total = parseFloat(pay(hrs, data.rate || 0));
+        grandTotal += total;
+        return `
+        <div class="admin-row">
+          <div class="admin-name">${data.name || uid}</div>
+          <div class="admin-hours">${hrs.toFixed(2)} hrs</div>
+          <div class="admin-rate">@ $${parseFloat(data.rate || 0).toFixed(2)}/hr</div>
+          <div class="admin-total">$${total.toFixed(2)}</div>
+          <button class="approve-btn" onclick="approvePeriod('${uid}', '${period.id}', ${hrs}, ${data.rate || 0}, ${total}, '${period.label}')">
+            Approve
+          </button>
+        </div>`;
+      }).join("");
+      el.innerHTML += `<div class="grand-total-row"><span>Total Payroll:</span><span>$${grandTotal.toFixed(2)}</span></div>`;
+    }
+
+    function renderAdminPayPeriods(periods) {
+      // reuse pay-history for admin too
+    }
+
+    // ─── Owner Actions ────────────────────────────────────────────────────────
+    window.updateRate = async (uid, rate) => {
+      await updateDoc(doc(db, "users", uid), { hourlyRate: parseFloat(rate) });
+      showToast("Rate updated ✓");
+    };
+
+    window.approvePeriod = async (uid, periodId, hours, rate, total, label) => {
+      const periodRef = doc(db, "payPeriods", periodId);
+      const snap = await getDoc(periodRef);
+      const existing = snap.exists() ? snap.data() : { id: periodId, label, endDate: periodId.split("_")[1], employees: {} };
+      existing.employees[uid] = { hoursWorked: hours, rate, total, approved: true };
+      await setDoc(periodRef, existing);
+      showToast("Paycheck approved ✓");
+      await loadAdminCurrentPeriod();
+    };
+
+    // ─── Show App ─────────────────────────────────────────────────────────────
+    function showLogin() {
+      document.getElementById("login-screen").style.display = "flex";
+      document.getElementById("app-screen").style.display = "none";
+    }
+
+    async function showApp() {
+      document.getElementById("login-screen").style.display = "none";
+      document.getElementById("app-screen").style.display = "block";
+
+      const nameEl = document.getElementById("user-name");
+      nameEl.textContent = userProfile?.name || currentUser.email;
+
+      const roleEl = document.getElementById("user-role");
+      roleEl.textContent = userProfile?.role === "owner" ? "Owner" : "Employee";
+
+      updateClockUI();
+      await loadCurrentPeriodSummary();
+      await loadRecentEntries();
+      await loadPayHistory();
+
+      if (userProfile?.role === "owner") {
+        document.getElementById("admin-section").style.display = "block";
+        document.getElementById("clock-section").style.display = "none";
+        await loadAdminDashboard();
+        await loadAdminCurrentPeriod();
+      } else {
+        document.getElementById("admin-section").style.display = "none";
+        document.getElementById("clock-section").style.display = "block";
+      }
+    }
+
+    // ─── Tab Navigation ───────────────────────────────────────────────────────
+    window.showTab = (tab) => {
+      document.querySelectorAll(".tab-content").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+      document.getElementById(`tab-${tab}`).classList.add("active");
+      document.querySelector(`[data-tab="${tab}"]`).classList.add("active");
+    };
+
+    // ─── Toast ────────────────────────────────────────────────────────────────
+    window.showToast = (msg) => {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.classList.add("show");
+      setTimeout(() => t.classList.remove("show"), 3000);
+    };
+
+    // ─── Enter key on login ───────────────────────────────────────────────────
+    document.addEventListener("DOMContentLoaded", () => {
+      document.getElementById("password").addEventListener("keydown", e => {
+        if (e.key === "Enter") window.handleLogin();
+      });
+    });
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --blue: #3a6fc4;
+      --blue-dark: #2a57a0;
+      --blue-deeper: #1e3f7a;
+      --white: #ffffff;
+      --bg: #f4f7fc;
+      --text: #1a2540;
+      --text-muted: #6b7a9a;
+      --border: #d6e0f5;
+      --success: #22c55e;
+      --danger: #ef4444;
+      --radius: 14px;
+      --shadow: 0 4px 24px rgba(42,87,160,0.12);
+    }
+
+    body {
+      font-family: "Nunito", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── LOGIN ── */
+    #login-screen {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, var(--blue-deeper) 0%, var(--blue) 100%);
+      padding: 20px;
+    }
+
+    .login-card {
+      background: white;
+      border-radius: 24px;
+      padding: 48px 40px;
+      width: 100%;
+      max-width: 400px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+      text-align: center;
+    }
+
+    .login-paw {
+      font-size: 48px;
+      margin-bottom: 8px;
+    }
+
+    .login-card h1 {
+      font-size: 22px;
+      font-weight: 900;
+      color: var(--blue-deeper);
+      margin-bottom: 4px;
+    }
+
+    .login-card p {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-bottom: 32px;
+    }
+
+    .login-field {
+      margin-bottom: 16px;
+      text-align: left;
+    }
+
+    .login-field label {
+      display: block;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .login-field input {
+      width: 100%;
+      padding: 12px 16px;
+      border: 2px solid var(--border);
+      border-radius: 10px;
+      font-family: "Nunito", sans-serif;
+      font-size: 15px;
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .login-field input:focus { border-color: var(--blue); }
+
+    .login-btn {
+      width: 100%;
+      padding: 14px;
+      background: var(--blue);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-family: "Nunito", sans-serif;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: background 0.2s, transform 0.1s;
+    }
+
+    .login-btn:hover { background: var(--blue-dark); }
+    .login-btn:active { transform: scale(0.98); }
+
+    #login-error {
+      color: var(--danger);
+      font-size: 13px;
+      margin-top: 12px;
+      min-height: 18px;
+    }
+
+    /* ── APP SHELL ── */
+    #app-screen { display: none; min-height: 100vh; }
+
+    .topbar {
+      background: var(--blue-deeper);
+      color: white;
+      padding: 0 20px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .topbar-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 900;
+      font-size: 16px;
+    }
+
+    .topbar-brand span { font-size: 22px; }
+
+    .topbar-user {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .topbar-user-info { text-align: right; }
+    .topbar-user-info .name { font-weight: 800; font-size: 14px; }
+    .topbar-user-info .role { font-size: 11px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    .logout-btn {
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      color: white;
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-family: "Nunito", sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .logout-btn:hover { background: rgba(255,255,255,0.25); }
+
+    /* ── TABS ── */
+    .tabs {
+      background: white;
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      padding: 0 20px;
+      gap: 4px;
+      overflow-x: auto;
+    }
+
+    .tab-btn {
+      padding: 14px 20px;
+      border: none;
+      background: none;
+      font-family: "Nunito", sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-muted);
+      cursor: pointer;
+      white-space: nowrap;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      transition: color 0.2s, border-color 0.2s;
+    }
+
+    .tab-btn.active {
+      color: var(--blue);
+      border-bottom-color: var(--blue);
+    }
+
+    /* ── CONTENT ── */
+    .content { max-width: 780px; margin: 0 auto; padding: 24px 16px 80px; }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ── CARDS ── */
+    .card {
+      background: white;
+      border-radius: var(--radius);
+      padding: 24px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+
+    /* ── CLOCK ── */
+    .clock-center { text-align: center; padding: 8px 0 16px; }
+
+    .clock-btn {
+      padding: 18px 48px;
+      border: none;
+      border-radius: 50px;
+      font-family: "Nunito", sans-serif;
+      font-size: 20px;
+      font-weight: 900;
+      cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.15s;
+      box-shadow: 0 6px 24px rgba(0,0,0,0.15);
+    }
+
+    .clock-btn.in {
+      background: var(--blue);
+      color: white;
+    }
+
+    .clock-btn.out {
+      background: var(--danger);
+      color: white;
+    }
+
+    .clock-btn:hover { transform: translateY(-2px); box-shadow: 0 10px 32px rgba(0,0,0,0.2); }
+    .clock-btn:active { transform: scale(0.97); }
+    .clock-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .clock-status {
+      margin-top: 14px;
+      font-size: 14px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .clock-status.active { color: var(--success); }
+
+    #clock-time-display {
+      display: none;
+      margin-top: 16px;
+    }
+
+    #timer {
+      font-size: 36px;
+      font-weight: 900;
+      color: var(--blue);
+      letter-spacing: 2px;
+    }
+
+    /* ── SUMMARY STATS ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .stat-box {
+      background: white;
+      border-radius: var(--radius);
+      padding: 20px 16px;
+      text-align: center;
+      box-shadow: var(--shadow);
+    }
+
+    .stat-label {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+
+    .stat-value {
+      font-size: 24px;
+      font-weight: 900;
+      color: var(--blue-deeper);
+    }
+
+    .stat-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* ── ENTRY ROWS ── */
+    .entry-row {
+      display: grid;
+      grid-template-columns: 70px 1fr 70px 70px;
+      gap: 8px;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 14px;
+    }
+
+    .entry-row:last-child { border-bottom: none; }
+    .entry-date { font-weight: 700; color: var(--text-muted); }
+    .entry-times { color: var(--text); }
+    .entry-hours { font-weight: 700; text-align: right; }
+    .entry-pay { font-weight: 800; color: var(--blue); text-align: right; }
+
+    /* ── PAYCHECK ROWS ── */
+    .paycheck-row {
+      display: grid;
+      grid-template-columns: 1fr 80px 80px 90px;
+      gap: 8px;
+      align-items: center;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .paycheck-row:last-child { border-bottom: none; }
+    .paycheck-period { font-weight: 700; font-size: 14px; }
+    .paycheck-hours { font-size: 13px; color: var(--text-muted); text-align: right; }
+    .paycheck-total { font-size: 16px; font-weight: 900; color: var(--blue-deeper); text-align: right; }
+
+    .paycheck-badge {
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 800;
+      text-align: center;
+      text-transform: uppercase;
+    }
+    .paycheck-badge.approved { background: #dcfce7; color: #16a34a; }
+
+    /* ── ADMIN ── */
+    .employee-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 12px;
+      align-items: center;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .employee-row:last-child { border-bottom: none; }
+    .employee-name { font-weight: 800; }
+    .employee-email { font-size: 13px; color: var(--text-muted); }
+
+    .employee-rate {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .rate-input {
+      width: 60px;
+      padding: 6px 8px;
+      border: 2px solid var(--border);
+      border-radius: 8px;
+      font-family: "Nunito", sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      text-align: center;
+      color: var(--text);
+      outline: none;
+    }
+
+    .rate-input:focus { border-color: var(--blue); }
+
+    .admin-row {
+      display: grid;
+      grid-template-columns: 1fr 80px 90px 80px auto;
+      gap: 8px;
+      align-items: center;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 14px;
+    }
+
+    .admin-row:last-child { border-bottom: none; }
+    .admin-name { font-weight: 800; }
+    .admin-hours { text-align: right; color: var(--text-muted); }
+    .admin-rate { font-size: 12px; color: var(--text-muted); }
+    .admin-total { font-weight: 900; color: var(--blue-deeper); text-align: right; }
+
+    .approve-btn {
+      padding: 6px 12px;
+      background: var(--blue);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-family: "Nunito", sans-serif;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .approve-btn:hover { background: var(--blue-dark); }
+
+    .grand-total-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 16px 0 0;
+      font-size: 16px;
+      font-weight: 900;
+      color: var(--blue-deeper);
+      border-top: 2px solid var(--border);
+      margin-top: 8px;
+    }
+
+    /* ── PERIOD BANNER ── */
+    .period-banner {
+      background: linear-gradient(135deg, var(--blue) 0%, var(--blue-deeper) 100%);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      color: white;
+      margin-bottom: 20px;
+    }
+
+    .period-banner .label {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      opacity: 0.8;
+      margin-bottom: 4px;
+    }
+
+    .period-banner .dates {
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    /* ── EMPTY STATE ── */
+    .empty-state {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 14px;
+      padding: 24px 0;
+    }
+
+    /* ── TOAST ── */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: var(--blue-deeper);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 50px;
+      font-size: 14px;
+      font-weight: 700;
+      z-index: 999;
+      transition: transform 0.3s ease;
+      pointer-events: none;
+    }
+
+    #toast.show { transform: translateX(-50%) translateY(0); }
+
+    /* ── MOBILE ── */
+    @media (max-width: 480px) {
+      .stats-grid { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+      .stat-value { font-size: 20px; }
+      .stat-box { padding: 14px 10px; }
+      .clock-btn { padding: 16px 36px; font-size: 18px; }
+      #timer { font-size: 28px; }
+      .entry-row { grid-template-columns: 60px 1fr 60px 60px; font-size: 13px; }
+      .paycheck-row { grid-template-columns: 1fr 70px 70px 80px; font-size: 13px; }
+      .admin-row { grid-template-columns: 1fr 70px 70px auto; font-size: 13px; }
+      .admin-rate { display: none; }
+      .topbar-user-info { display: none; }
+      .content { padding: 16px 12px 80px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── LOGIN SCREEN ───────────────────────────────────────────────────────── -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-paw">🐾</div>
+    <h1>The Purr-fect Paw</h1>
+    <p>Staff Portal — Sign in to continue</p>
+
+    <div class="login-field">
+      <label>Email</label>
+      <input type="email" id="email" placeholder="you@example.com" autocomplete="email" />
+    </div>
+    <div class="login-field">
+      <label>Password</label>
+      <input type="password" id="password" placeholder="••••••••" autocomplete="current-password" />
+    </div>
+    <button class="login-btn" onclick="handleLogin()">Sign In</button>
+    <div id="login-error"></div>
+  </div>
+</div>
+
+<!-- ── APP SCREEN ─────────────────────────────────────────────────────────── -->
+<div id="app-screen">
+
+  <!-- Top Bar -->
+  <div class="topbar">
+    <div class="topbar-brand">
+      <span>🐾</span> Staff Portal
+    </div>
+    <div class="topbar-user">
+      <div class="topbar-user-info">
+        <div class="name" id="user-name"></div>
+        <div class="role" id="user-role"></div>
+      </div>
+      <button class="logout-btn" onclick="handleLogout()">Sign Out</button>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="home" onclick="showTab('home')">Home</button>
+    <button class="tab-btn" data-tab="history" onclick="showTab('history')">Time History</button>
+    <button class="tab-btn" data-tab="pay" onclick="showTab('pay')">Paychecks</button>
+    <button class="tab-btn" data-tab="admin" onclick="showTab('admin')" id="admin-tab-btn" style="display:none">Admin</button>
+  </div>
+
+  <div class="content">
+
+    <!-- ── HOME TAB ─────────────────────────────────────────── -->
+    <div id="tab-home" class="tab-content active">
+
+      <!-- Current Period Banner -->
+      <div class="period-banner">
+        <div class="label">Current Pay Period</div>
+        <div class="dates" id="period-label">Loading…</div>
+      </div>
+
+      <!-- Stats -->
+      <div class="stats-grid">
+        <div class="stat-box">
+          <div class="stat-label">Hours</div>
+          <div class="stat-value" id="period-hours">—</div>
+          <div class="stat-sub">this period</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Earned</div>
+          <div class="stat-value" id="period-pay">—</div>
+          <div class="stat-sub">estimated</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Rate</div>
+          <div class="stat-value" id="period-rate">—</div>
+          <div class="stat-sub">hourly</div>
+        </div>
+      </div>
+
+      <!-- Clock In/Out (employees only) -->
+      <div id="clock-section" class="card">
+        <div class="card-title">Clock In / Out</div>
+        <div class="clock-center">
+          <button class="clock-btn in" id="clock-btn" onclick="handleClockToggle()">Clock In</button>
+          <div class="clock-status" id="clock-status">Not clocked in</div>
+          <div id="clock-time-display">
+            <div id="timer">00:00:00</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Admin section on home tab -->
+      <div id="admin-section" style="display:none">
+        <div class="card">
+          <div class="card-title">Current Period Summary — <span id="admin-period-label"></span></div>
+          <div id="admin-period-summary"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── TIME HISTORY TAB ──────────────────────────────────── -->
+    <div id="tab-history" class="tab-content">
+      <div class="card">
+        <div class="card-title">Recent Clock Entries</div>
+        <div id="recent-entries"><p class="empty-state">Loading…</p></div>
+      </div>
+    </div>
+
+    <!-- ── PAYCHECKS TAB ─────────────────────────────────────── -->
+    <div id="tab-pay" class="tab-content">
+      <div class="card">
+        <div class="card-title">Approved Paychecks</div>
+        <div id="pay-history"><p class="empty-state">Loading…</p></div>
+      </div>
+    </div>
+
+    <!-- ── ADMIN TAB ─────────────────────────────────────────── -->
+    <div id="tab-admin" class="tab-content">
+      <div class="card">
+        <div class="card-title">Employee Hourly Rates</div>
+        <div id="admin-employees"><p class="empty-state">Loading…</p></div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /app-screen -->
+
+<div id="toast"></div>
+
+<script>
+  // Show admin tab button if owner
+  document.addEventListener("DOMContentLoaded", () => {});
+
+  // Watch for owner role to show admin tab
+  const adminTabObserver = new MutationObserver(() => {
+    const role = document.getElementById("user-role")?.textContent;
+    const btn = document.getElementById("admin-tab-btn");
+    if (btn && role === "Owner") btn.style.display = "inline-block";
+  });
+  adminTabObserver.observe(document.body, { subtree: true, characterData: true, childList: true });
+</script>
+
+</body>
+</html>
