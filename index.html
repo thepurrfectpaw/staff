@@ -617,8 +617,10 @@
     // ── Profile ───────────────────────────────────────────────────────────────
     async function loadProfileTab(){
       const snap=await getDoc(doc(db,"users",currentUser.uid));
-      const data=snap.exists()?snap.data():{};
-      document.getElementById("profile-name").value=data.name||"";
+      const data=snap.exists()?snap.data():{};payday
+      const nameEl=document.getElementById("profile-name");
+      nameEl.value=data.name||"";
+      nameEl.placeholder=data.name||"Your full name";
       document.getElementById("profile-email").value=data.email||currentUser.email;
     }
     window.saveProfile=async()=>{
@@ -665,6 +667,7 @@
         document.getElementById("emp-bottom-nav").style.display="none";
         await loadAllUsers();
         await loadAdminHome();
+        await loadProfileTab();
       } else {
         document.getElementById("owner-tabs").style.display="none";
         document.getElementById("emp-tabs").style.display="flex";
@@ -676,6 +679,7 @@
         await loadEmpCurrentPeriod();
         await loadEmpTimeHistory();
         await loadEmpPaychecks();
+        await loadProfileTab();
       }
     }
 
@@ -759,7 +763,7 @@
     #login-screen::before{content:"🐾🐾🐾🐾🐾🐾🐾🐾🐾🐾🐾🐾🐾🐾🐾🐾🐾🐾🐾🐾";position:absolute;font-size:80px;opacity:0.04;letter-spacing:20px;line-height:100px;width:200%;top:-20px;left:-20px;word-break:break-all;pointer-events:none;}
     .auth-card{background:white;border-radius:24px;padding:40px 36px;width:100%;max-width:420px;box-shadow:0 24px 80px rgba(0,0,0,0.3);position:relative;z-index:1;}
     .auth-logo{text-align:center;margin-bottom:28px;padding-bottom:24px;border-bottom:2px solid var(--border);}
-    .auth-paw{font-size:44px;margin-bottom:8px;}
+    .auth-paw{display:none;}
     .auth-logo h1{font-size:20px;font-weight:900;color:var(--blue-deeper);margin-bottom:2px;}
     .auth-logo p{font-size:13px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:1px;}
     .auth-panel{display:none;}.auth-panel.active{display:block;}
@@ -803,7 +807,9 @@
     .bottom-nav-inner{display:flex;align-items:stretch;max-width:600px;margin:0 auto;}
     .bnav-btn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:10px 4px 14px;border:none;background:none;cursor:pointer;color:var(--text-muted);font-family:"Nunito",sans-serif;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;gap:4px;transition:color 0.2s;-webkit-tap-highlight-color:transparent;}
     .bnav-btn.active{color:var(--blue);}
-    .bnav-icon{font-size:22px;line-height:1;}
+    .bnav-icon{font-size:22px;line-height:1;display:flex;align-items:center;justify-content:center;}
+.bnav-img{width:24px;height:24px;object-fit:contain;opacity:0.5;transition:opacity 0.2s;}
+.bnav-btn.active .bnav-img{opacity:1;filter:drop-shadow(0 0 2px rgba(58,111,196,0.3));}
     .bnav-label{font-size:9px;font-weight:800;}
 
     @media(max-width:768px){
@@ -973,8 +979,7 @@
 <div id="login-screen">
   <div class="auth-card">
     <div class="auth-logo">
-      <div class="auth-paw">🐾</div>
-      <h1>The Purr-fect Paw</h1>
+      <img src="assets/images/logo.png" alt="The Purr-fect Paw" style="width:180px;height:auto;margin-bottom:10px;"/>
       <p>Staff Portal</p>
     </div>
     <div id="auth-message" class="auth-message"></div>
@@ -1011,7 +1016,7 @@
 <div id="app-screen">
   <div class="topbar">
     <div class="topbar-inner">
-      <div class="topbar-brand"><span>🐾</span> Staff Portal</div>
+      <div class="topbar-brand"><img src="assets/images/logo.png" alt="The Purr-fect Paw" style="height:36px;width:auto;"/> Staff Portal</div>
       <div class="topbar-user">
         <div class="topbar-user-info">
           <div class="name" id="user-name"></div>
@@ -1043,21 +1048,21 @@
   <!-- OWNER BOTTOM NAV (mobile) -->
   <div id="owner-bottom-nav" class="bottom-nav" style="display:none;">
     <div class="bottom-nav-inner">
-      <button class="bnav-btn active" data-owner-tab="home" onclick="showOwnerTab('home')"><span class="bnav-icon">🏠</span><span class="bnav-label">Home</span></button>
-      <button class="bnav-btn" data-owner-tab="employees" onclick="showOwnerTab('employees')"><span class="bnav-icon">👥</span><span class="bnav-label">Staff</span></button>
-      <button class="bnav-btn" data-owner-tab="history" onclick="showOwnerTab('history')"><span class="bnav-icon">🕐</span><span class="bnav-label">History</span></button>
-      <button class="bnav-btn" data-owner-tab="payroll" onclick="showOwnerTab('payroll')"><span class="bnav-icon">💰</span><span class="bnav-label">Payroll</span></button>
-      <button class="bnav-btn" data-owner-tab="profile" onclick="showOwnerTab('profile')"><span class="bnav-icon">👤</span><span class="bnav-label">Profile</span></button>
+      <button class="bnav-btn active" data-owner-tab="home" onclick="showOwnerTab('home')"><span class="bnav-icon"><img src="assets/images/home.png" class="bnav-img" alt="Home"/></span><span class="bnav-label">Home</span></button>
+      <button class="bnav-btn" data-owner-tab="employees" onclick="showOwnerTab('employees')"><span class="bnav-icon"><img src="assets/images/employees.png" class="bnav-img" alt="Employees"/></span><span class="bnav-label">Employees</span></button>
+      <button class="bnav-btn" data-owner-tab="history" onclick="showOwnerTab('history')"><span class="bnav-icon"><img src="assets/images/history.png" class="bnav-img" alt="History"/></span><span class="bnav-label">History</span></button>
+      <button class="bnav-btn" data-owner-tab="payroll" onclick="showOwnerTab('payroll')"><span class="bnav-icon"><img src="assets/images/paycheck.png" class="bnav-img" alt="Payroll"/></span><span class="bnav-label">Payroll</span></button>
+      <button class="bnav-btn" data-owner-tab="profile" onclick="showOwnerTab('profile')"><span class="bnav-icon"><img src="assets/images/profile.png" class="bnav-img" alt="Profile"/></span><span class="bnav-label">Profile</span></button>
     </div>
   </div>
 
   <!-- EMPLOYEE BOTTOM NAV (mobile) -->
   <div id="emp-bottom-nav" class="bottom-nav" style="display:none;">
     <div class="bottom-nav-inner">
-      <button class="bnav-btn active" data-emp-tab="home" onclick="showEmpTab('home')"><span class="bnav-icon">🏠</span><span class="bnav-label">Home</span></button>
-      <button class="bnav-btn" data-emp-tab="history" onclick="showEmpTab('history')"><span class="bnav-icon">🕐</span><span class="bnav-label">History</span></button>
-      <button class="bnav-btn" data-emp-tab="paychecks" onclick="showEmpTab('paychecks')"><span class="bnav-icon">💵</span><span class="bnav-label">Pay</span></button>
-      <button class="bnav-btn" data-emp-tab="profile" onclick="showEmpTab('profile')"><span class="bnav-icon">👤</span><span class="bnav-label">Profile</span></button>
+      <button class="bnav-btn active" data-emp-tab="home" onclick="showEmpTab('home')"><span class="bnav-icon"><img src="assets/images/home.png" class="bnav-img" alt="Home"/></span><span class="bnav-label">Home</span></button>
+      <button class="bnav-btn" data-emp-tab="history" onclick="showEmpTab('history')"><span class="bnav-icon"><img src="assets/images/history.png" class="bnav-img" alt="History"/></span><span class="bnav-label">History</span></button>
+      <button class="bnav-btn" data-emp-tab="paychecks" onclick="showEmpTab('paychecks')"><span class="bnav-icon"><img src="assets/images/paycheck.png" class="bnav-img" alt="Pay"/></span><span class="bnav-label">Pay</span></button>
+      <button class="bnav-btn" data-emp-tab="profile" onclick="showEmpTab('profile')"><span class="bnav-icon"><img src="assets/images/profile.png" class="bnav-img" alt="Profile"/></span><span class="bnav-label">Profile</span></button>
     </div>
   </div>
 
@@ -1157,7 +1162,7 @@
       <!-- PAYCHECKS -->
       <div id="emp-tab-paychecks" class="emp-tab-content">
         <div class="card">
-          <div class="card-title">My Approved Paychecks</div>
+          <div class="card-title">My Paystub History</div>
           <div id="emp-paychecks"><p class="empty-state">Loading…</p></div>
         </div>
       </div>
@@ -1165,7 +1170,7 @@
       <!-- PROFILE -->
       <div id="emp-tab-profile" class="emp-tab-content">
         <div class="card">
-          <div class="card-title">My Profile</div>
+          <div class="card-title">Profile</div>
           <div class="profile-field"><label>Full Name</label><input type="text" id="profile-name" placeholder="Your full name"/></div>
           <div class="profile-field">
             <label>Email</label><input type="email" id="profile-email" disabled/>
