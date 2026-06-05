@@ -1020,18 +1020,9 @@
       <button class="auth-btn primary" onclick="handleLogin()">Sign In</button>
       <div class="auth-links">
         <button class="auth-link" onclick="showAuthScreen('forgot')">Forgot password?</button>
-        <button class="auth-link" onclick="showAuthScreen('register')">New employee? Register</button>
       </div>
     </div>
-    <div id="auth-register" class="auth-panel">
-      <h2>Create account</h2>
-      <div class="auth-field"><label>Full Name</label><input type="text" id="reg-name" placeholder="Your name" autocomplete="name"/></div>
-      <div class="auth-field"><label>Email</label><input type="email" id="reg-email" placeholder="you@thepurrfectpaw.com" autocomplete="email"/></div>
-      <div class="auth-field"><label>Password</label><input type="password" id="reg-password" placeholder="Min. 6 characters"/></div>
-      <div class="auth-field"><label>Confirm Password</label><input type="password" id="reg-confirm" placeholder="Repeat password" onkeydown="if(event.key==='Enter') handleRegister()"/></div>
-      <button class="auth-btn primary" onclick="handleRegister()">Create Account</button>
-      <div class="auth-links"><button class="auth-link" onclick="showAuthScreen('signin')">Already have an account? Sign in</button></div>
-    </div>
+    
     <div id="auth-forgot" class="auth-panel">
       <h2>Reset password</h2>
       <p class="auth-subtext">Enter your email and we'll send you a reset link.</p>
@@ -1232,12 +1223,13 @@
     <h3>What are you working on?</h3>
     <select id="task-select" class="modal-select" onchange="onTaskChange()">
       <option value="">— Select a task —</option>
-      <option>Yard Signs</option>
-      <option>Pet Businesses</option>
       <option>Pet Condolence Cards</option>
+      <option>Updating Profiles</option>
+      <option>Pet Businesses</option>
+      <option>Social Media</option>
+      <option>Yard Signs</option>
       <option>Events</option>
-      <option>Office Work</option>
-      <option>Misc</option>
+      <option>Misc.</option>
     </select>
     <input type="text" id="task-misc" class="modal-input" placeholder="Describe the task…" style="display:none;margin-top:10px;"/>
     <div class="modal-actions">
