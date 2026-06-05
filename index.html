@@ -188,35 +188,85 @@
 
     // ─── Clock In / Out ───────────────────────────────────────────────────────
     window.handleClockToggle = async () => {
+      if (!activeClockEntry) {
+        showTaskModal();
+      } else {
+        showClockOutModal();
+      }
+    };
+
+    window.handleClockIn = async () => {
+      const selected = document.getElementById("task-select").value;
+      const misc = document.getElementById("task-misc").value.trim();
+      const task = selected === "Misc" ? (misc || "Misc") : selected;
+      if (!task) { alert("Please select a task."); return; }
+      closeModal("task-modal");
       const btn = document.getElementById("clock-btn");
       btn.disabled = true;
-
-      if (!activeClockEntry) {
-        // Clock IN
-        const entry = {
-          uid: currentUser.uid,
-          name: userProfile.name,
-          clockIn: serverTimestamp(),
-          clockOut: null,
-          totalMs: null
-        };
-        const ref = await addDoc(collection(db, "clockEntries"), entry);
-        activeClockEntry = { id: ref.id, ...entry, clockIn: Timestamp.now() };
-        updateClockUI();
-      } else {
-        // Clock OUT
-        const now = Timestamp.now();
-        const inMs = activeClockEntry.clockIn.toMillis ? activeClockEntry.clockIn.toMillis() : activeClockEntry.clockIn.seconds * 1000;
-        const totalMs = now.toMillis() - inMs;
-        await updateDoc(doc(db, "clockEntries", activeClockEntry.id), {
-          clockOut: serverTimestamp(),
-          totalMs
-        });
-        activeClockEntry = null;
-        updateClockUI();
-        await loadRecentEntries();
-      }
+      const entry = {
+        uid: currentUser.uid,
+        name: userProfile.name,
+        task,
+        clockIn: serverTimestamp(),
+        clockOut: null,
+        totalMs: null
+      };
+      const ref = await addDoc(collection(db, "clockEntries"), entry);
+      activeClockEntry = { id: ref.id, ...entry, clockIn: Timestamp.now() };
+      updateClockUI();
       btn.disabled = false;
+    };
+
+    window.handleClockOut = async () => {
+      const adjustedStr = document.getElementById("clockout-time").value;
+      const now = new Date();
+      let clockOutTime = Timestamp.now();
+      if (adjustedStr) {
+        const [h, m] = adjustedStr.split(":").map(Number);
+        const adjusted = new Date();
+        adjusted.setHours(h, m, 0, 0);
+        if (adjusted > now) { alert("You cannot set a clock-out time in the future."); return; }
+        clockOutTime = Timestamp.fromDate(adjusted);
+      }
+      closeModal("clockout-modal");
+      const btn = document.getElementById("clock-btn");
+      btn.disabled = true;
+      const inMs = activeClockEntry.clockIn.toMillis ? activeClockEntry.clockIn.toMillis() : activeClockEntry.clockIn.seconds * 1000;
+      const totalMs = clockOutTime.toMillis() - inMs;
+      if (totalMs <= 0) { alert("Clock-out time cannot be before clock-in time."); btn.disabled = false; return; }
+      await updateDoc(doc(db, "clockEntries", activeClockEntry.id), {
+        clockOut: clockOutTime,
+        totalMs
+      });
+      activeClockEntry = null;
+      updateClockUI();
+      await loadRecentEntries();
+      await loadCurrentPeriodSummary();
+      btn.disabled = false;
+    };
+
+    function showTaskModal() {
+      document.getElementById("task-select").value = "";
+      document.getElementById("task-misc").value = "";
+      document.getElementById("task-misc").style.display = "none";
+      document.getElementById("task-modal").style.display = "flex";
+    }
+
+    function showClockOutModal() {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2,"0");
+      const mm = String(now.getMinutes()).padStart(2,"0");
+      document.getElementById("clockout-time").value = `${hh}:${mm}`;
+      document.getElementById("clockout-modal").style.display = "flex";
+    }
+
+    window.closeModal = (id) => {
+      document.getElementById(id).style.display = "none";
+    };
+
+    window.onTaskChange = () => {
+      const sel = document.getElementById("task-select").value;
+      document.getElementById("task-misc").style.display = sel === "Misc" ? "block" : "none";
     };
 
     function updateClockUI() {
@@ -368,6 +418,7 @@
         return `
         <div class="entry-row">
           <div class="entry-date">${fmtDate(e.clockOut)}</div>
+          <div class="entry-task">${e.task || "—"}</div>
           <div class="entry-times">${fmtTime(e.clockIn)} – ${fmtTime(e.clockOut)}</div>
           <div class="entry-hours">${hrs} hrs</div>
           <div class="entry-pay">$${pay(hrs, rate)}</div>
@@ -941,7 +992,7 @@
     /* ── ENTRY ROWS ── */
     .entry-row {
       display: grid;
-      grid-template-columns: 70px 1fr 70px 70px;
+      grid-template-columns: 60px 1fr 1fr 65px 65px;
       gap: 8px;
       align-items: center;
       padding: 12px 0;
@@ -951,6 +1002,7 @@
 
     .entry-row:last-child { border-bottom: none; }
     .entry-date { font-weight: 700; color: var(--text-muted); }
+    .entry-task { font-size: 13px; color: var(--blue); font-weight: 700; }
     .entry-times { color: var(--text); }
     .entry-hours { font-weight: 700; text-align: right; }
     .entry-pay { font-weight: 800; color: var(--blue); text-align: right; }
@@ -1081,6 +1133,95 @@
       font-size: 16px;
       font-weight: 800;
     }
+
+    /* ── MODALS ── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15,30,70,0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 500;
+      padding: 20px;
+      backdrop-filter: blur(3px);
+    }
+
+    .modal-card {
+      background: white;
+      border-radius: 20px;
+      padding: 32px 28px;
+      width: 100%;
+      max-width: 380px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+    }
+
+    .modal-card h3 {
+      font-size: 18px;
+      font-weight: 900;
+      color: var(--text);
+      margin-bottom: 20px;
+    }
+
+    .modal-subtext {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+      margin-top: -12px;
+    }
+
+    .modal-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    .modal-select, .modal-input {
+      width: 100%;
+      padding: 12px 14px;
+      border: 2px solid var(--border);
+      border-radius: 10px;
+      font-family: "Nunito", sans-serif;
+      font-size: 15px;
+      color: var(--text);
+      outline: none;
+      background: #fafbff;
+      transition: border-color 0.2s;
+    }
+
+    .modal-select:focus, .modal-input:focus {
+      border-color: var(--blue);
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .modal-btn {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      border-radius: 10px;
+      font-family: "Nunito", sans-serif;
+      font-size: 14px;
+      font-weight: 800;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }
+
+    .modal-btn.primary { background: var(--blue); color: white; }
+    .modal-btn.primary:hover { background: var(--blue-dark); }
+    .modal-btn.secondary { background: var(--border); color: var(--text); }
+    .modal-btn.secondary:hover { background: #c5d5ef; }
+    .modal-btn.danger { background: var(--danger); color: white; }
+    .modal-btn.danger:hover { background: #dc2626; }
+    .modal-btn:active { transform: scale(0.97); }
 
     /* ── EMPTY STATE ── */
     .empty-state {
@@ -1311,6 +1452,41 @@
 </div><!-- /app-screen -->
 
 <div id="toast"></div>
+
+<!-- ── TASK MODAL ── -->
+<div id="task-modal" class="modal-overlay" style="display:none">
+  <div class="modal-card">
+    <h3>What are you working on?</h3>
+    <select id="task-select" class="modal-select" onchange="onTaskChange()">
+      <option value="">— Select a task —</option>
+      <option>Yard Signs</option>
+      <option>Pet Businesses</option>
+      <option>Pet Condolence Cards</option>
+      <option>Events</option>
+      <option>Office Work</option>
+      <option>Misc</option>
+    </select>
+    <input type="text" id="task-misc" class="modal-input" placeholder="Describe the task…" style="display:none; margin-top:10px;" />
+    <div class="modal-actions">
+      <button class="modal-btn secondary" onclick="closeModal('task-modal')">Cancel</button>
+      <button class="modal-btn primary" onclick="handleClockIn()">Clock In</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── CLOCK OUT MODAL ── -->
+<div id="clockout-modal" class="modal-overlay" style="display:none">
+  <div class="modal-card">
+    <h3>Confirm clock-out time</h3>
+    <p class="modal-subtext">Adjust backwards if needed — you cannot set a future time.</p>
+    <label class="modal-label">Clock-out time</label>
+    <input type="time" id="clockout-time" class="modal-input" />
+    <div class="modal-actions">
+      <button class="modal-btn secondary" onclick="closeModal('clockout-modal')">Cancel</button>
+      <button class="modal-btn danger" onclick="handleClockOut()">Clock Out</button>
+    </div>
+  </div>
+</div>
 
 <script>
   // PWA service worker registration
