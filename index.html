@@ -551,6 +551,47 @@
       document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
       document.getElementById(`tab-${tab}`).classList.add("active");
       document.querySelector(`[data-tab="${tab}"]`).classList.add("active");
+      if (tab === "profile") loadProfileTab();
+    };
+
+    // ─── Profile ──────────────────────────────────────────────────────────────
+    async function loadProfileTab() {
+      const snap = await getDoc(doc(db, "users", currentUser.uid));
+      const data = snap.exists() ? snap.data() : {};
+      document.getElementById("profile-name").value = data.name || "";
+      document.getElementById("profile-email").value = data.email || currentUser.email;
+      
+    }
+
+    window.saveProfile = async () => {
+      const updates = {
+        name: document.getElementById("profile-name").value.trim(),
+        
+      };
+      await updateDoc(doc(db, "users", currentUser.uid), updates);
+      userProfile = { ...userProfile, ...updates };
+      document.getElementById("user-name").textContent = updates.name || currentUser.email;
+      showToast("Profile saved ✓");
+    };
+
+    window.changePassword = async () => {
+      const { updatePassword } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
+      const np = document.getElementById("new-password").value;
+      const cp = document.getElementById("confirm-password").value;
+      const msg = document.getElementById("password-msg");
+      msg.textContent = "";
+      if (np.length < 6) { msg.textContent = "Password must be at least 6 characters."; msg.className = "auth-message error"; return; }
+      if (np !== cp) { msg.textContent = "Passwords do not match."; msg.className = "auth-message error"; return; }
+      try {
+        await updatePassword(auth.currentUser, np);
+        msg.textContent = "Password updated successfully!";
+        msg.className = "auth-message success";
+        document.getElementById("new-password").value = "";
+        document.getElementById("confirm-password").value = "";
+      } catch(e) {
+        msg.textContent = "Session expired — please sign out and sign back in, then try again.";
+        msg.className = "auth-message error";
+      }
     };
 
     // ─── Toast ────────────────────────────────────────────────────────────────
@@ -1223,6 +1264,52 @@
     .modal-btn.danger:hover { background: #dc2626; }
     .modal-btn:active { transform: scale(0.97); }
 
+    /* ── PROFILE ── */
+    .profile-form { display: flex; flex-direction: column; gap: 0; }
+
+    .profile-field {
+      margin-bottom: 16px;
+    }
+
+    .profile-field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
+    .profile-field input {
+      width: 100%;
+      padding: 12px 14px;
+      border: 2px solid var(--border);
+      border-radius: 10px;
+      font-family: "Nunito", sans-serif;
+      font-size: 15px;
+      color: var(--text);
+      outline: none;
+      background: #fafbff;
+      transition: border-color 0.2s;
+    }
+
+    .profile-field input:focus { border-color: var(--blue); }
+    .profile-field input:disabled { background: #f0f3fa; color: var(--text-muted); cursor: not-allowed; }
+
+    .profile-hint {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .profile-row {
+      display: grid;
+      grid-template-columns: 80px 1fr;
+      gap: 10px;
+    }
+
     /* ── EMPTY STATE ── */
     .empty-state {
       text-align: center;
@@ -1369,6 +1456,7 @@
     <button class="tab-btn" data-tab="history" onclick="showTab('history')">Time History</button>
     <button class="tab-btn" data-tab="pay" onclick="showTab('pay')">Paychecks</button>
     <button class="tab-btn" data-tab="admin" onclick="showTab('admin')" id="admin-tab-btn" style="display:none">Admin</button>
+    <button class="tab-btn" data-tab="profile" onclick="showTab('profile')">My Profile</button>
     <button class="tab-btn install-tab-btn" id="install-btn" onclick="installPWA()" style="display:none; margin-left:auto; color:var(--blue); border-bottom:none;">⬇ Add App</button>
   </div>
 
@@ -1447,6 +1535,39 @@
         <div id="admin-employees"><p class="empty-state">Loading…</p></div>
       </div>
     </div>
+
+    <!-- ── PROFILE TAB ─────────────────────────────────────────── -->
+    <div id="tab-profile" class="tab-content">
+      <div class="card">
+        <div class="card-title">My Profile</div>
+        <div class="profile-form">
+          <div class="profile-field">
+            <label>Full Name</label>
+            <input type="text" id="profile-name" placeholder="Your full name" />
+          </div>
+          <div class="profile-field">
+            <label>Email</label>
+            <input type="email" id="profile-email" placeholder="your@email.com" disabled />
+            <span class="profile-hint">Email cannot be changed here — contact your owner.</span>
+          </div>
+          
+          <button class="auth-btn primary" onclick="saveProfile()" style="margin-top:8px;">Save Changes</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Change Password</div>
+        <div class="profile-form">
+          <div class="profile-field">
+            <label>New Password</label>
+            <input type="password" id="new-password" placeholder="Min. 6 characters" />
+          </div>
+          <div class="profile-field">
+            <label>Confirm New Password</label>
+            <input type="password" id="confirm-password" placeholder="Repeat new password" />
+          </div>
+          <div id="password-msg" class="auth-message" style="margin-top:12px;"></div>
+          <button
 
   </div><!-- /content -->
 </div><!-- /app-screen -->
