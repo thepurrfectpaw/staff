@@ -508,6 +508,7 @@
       existing.employees[uid] = { hoursWorked: hours, rate, total, approved: true };
       await setDoc(periodRef, existing);
       showToast("Paycheck approved ✓");
+      await loadAdminDashboard();
       await loadAdminCurrentPeriod();
     };
 
