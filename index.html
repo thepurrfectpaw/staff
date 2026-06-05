@@ -6,12 +6,7 @@
   <title>Staff Portal — The Purr-fect Paw</title>
   <meta name="description" content="Staff portal for The Purr-fect Paw employees" />
   <meta name="theme-color" content="#3a6fc4" />
-  <link rel="manifest" href="manifest.json" />
-  <link rel="apple-touch-icon" href="assets/images/logo.png" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="TTP Staff" />
-  <meta name="mobile-web-app-capable" content="yes" />
+  
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
 
   <script type="module">
@@ -133,32 +128,7 @@
 
     window.handleLogout=async()=>{await signOut(auth);};
 
-    // ── PWA ──────────────────────────────────────────────────────────────────
-    let deferredPrompt=null;
-    window.addEventListener("beforeinstallprompt",(e)=>{
-      e.preventDefault(); deferredPrompt=e;
-      document.getElementById("install-btn").style.display="inline-block";
-    });
-    window.showInstallModal=()=>{
-      const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
-      const isAndroid=/android/i.test(navigator.userAgent);
-      const isStandalone=window.matchMedia("(display-mode: standalone)").matches||window.navigator.standalone;
-      if(isStandalone) return; // already installed
-      document.getElementById("install-ios").style.display=isIOS?"block":"none";
-      document.getElementById("install-android").style.display=isAndroid?"block":"none";
-      document.getElementById("install-desktop").style.display=(!isIOS&&!isAndroid)?"block":"none";
-      if(isAndroid&&deferredPrompt) document.getElementById("install-android-prompt").style.display="block";
-      if(!isIOS&&!isAndroid&&deferredPrompt) document.getElementById("install-desktop-prompt").style.display="block";
-      document.getElementById("install-modal").style.cssText="display:flex !important;";
-    };
-
-    window.installPWA=async()=>{
-      if(!deferredPrompt) return;
-      deferredPrompt.prompt();
-      const{outcome}=await deferredPrompt.userChoice;
-      if(outcome==="accepted") document.getElementById("install-btn").style.display="none";
-      deferredPrompt=null;
-    };
+    
 
     // ── Employee Clock In/Out ────────────────────────────────────────────────
     window.handleClockToggle=()=>{ if(!activeClockEntry) showTaskModal(); else showClockOutModal(); };
@@ -956,9 +926,7 @@
     .profile-field input:disabled{background:#f0f3fa;color:var(--text-muted);cursor:not-allowed;}
     .profile-hint{display:block;font-size:12px;color:var(--text-muted);margin-top:4px;}
 
-    /* INSTALL STEPS */
-    .install-step{display:flex;align-items:flex-start;gap:12px;margin-bottom:12px;font-size:14px;color:var(--text);line-height:1.5;}
-    .install-num{min-width:24px;height:24px;background:var(--blue);color:white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;flex-shrink:0;margin-top:1px;}
+    
 
     /* PERIOD GROUPS */
     .period-group{margin-bottom:8px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
@@ -980,22 +948,23 @@
     @media(max-width:600px){
       .stats-grid{gap:8px;}.stat-value{font-size:20px;}.stat-box{padding:14px 10px;}
       .clock-btn{padding:16px 36px;font-size:18px;}#timer{font-size:28px;}
-      .entry-header-row,.entry-row{grid-template-columns:80px 1fr 55px 55px 70px;font-size:12px;}
+      .entry-header-row,.entry-row{grid-template-columns:75px 1fr 55px 55px;font-size:12px;}
       .entry-times{display:none;}
-      .paycheck-row{grid-template-columns:1fr 70px 70px 80px;font-size:13px;}
+      .entry-actions{display:none;}
+      .paycheck-row{display:flex;flex-wrap:nowrap;align-items:center;gap:8px;font-size:13px;}
+      .paycheck-period{font-size:12px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .paycheck-hours{font-size:11px;white-space:nowrap;}
+      .paycheck-total{font-size:14px;white-space:nowrap;}
+      .paycheck-badge{font-size:10px;white-space:nowrap;padding:3px 7px;}
+      .period-group-header{flex-wrap:nowrap;}
+      .period-group-label{font-size:12px;}
+      .period-group-summary{gap:8px;font-size:12px;}
       .admin-row{grid-template-columns:1fr 70px 70px auto;font-size:13px;}.admin-rate{display:none;}
       .topbar-user-info{display:none;}
       .emp-card-right{gap:8px;}
     }
 
-    /* Hide Get App on desktop, show only on mobile */
-    @media(min-width:769px){
-      #install-btn{display:none !important;}
-    }
-    /* PWA standalone — always hide */
-    @media(display-mode:standalone){
-      #install-btn{display:none !important;}
-    }
+    
   </style>
 </head>
 <body>
@@ -1048,7 +1017,7 @@
           <div class="name" id="user-name"></div>
           <div class="role" id="user-role"></div>
         </div>
-        <button id="install-btn" onclick="showInstallModal()" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.3);color:white;padding:6px 14px;border-radius:8px;font-family:'Nunito',sans-serif;font-size:13px;font-weight:700;cursor:pointer;">📲 Get App</button>
+        
         <button class="logout-btn" onclick="handleLogout()">Sign Out</button>
       </div>
     </div>
@@ -1219,39 +1188,7 @@
 
 <div id="toast"></div>
 
-<!-- INSTALL MODAL -->
-<div id="install-modal" class="modal-overlay" style="display:none">
-  <div class="modal-card" style="max-width:380px;">
-    <h3>📲 Add to Home Screen</h3>
-    <div id="install-ios" style="display:none;">
-      <p style="font-size:14px;color:var(--text-muted);line-height:1.7;margin-bottom:16px;">To install on <strong>iPhone or iPad</strong>:</p>
-      <div class="install-step"><span class="install-num">1</span><span>Tap the <strong>Share</strong> button <span style="font-size:18px;">⎙</span> at the bottom of Safari</span></div>
-      <div class="install-step"><span class="install-num">2</span><span>Scroll down and tap <strong>"Add to Home Screen"</strong></span></div>
-      <div class="install-step"><span class="install-num">3</span><span>Tap <strong>"Add"</strong> in the top right</span></div>
-      <p style="font-size:12px;color:var(--text-muted);margin-top:14px;">⚠️ Must be opened in <strong>Safari</strong> — not Chrome or Firefox.</p>
-    </div>
-    <div id="install-android" style="display:none;">
-      <p style="font-size:14px;color:var(--text-muted);line-height:1.7;margin-bottom:16px;">To install on <strong>Android</strong>:</p>
-      <div class="install-step"><span class="install-num">1</span><span>Tap the <strong>menu (⋮)</strong> in the top right of Chrome</span></div>
-      <div class="install-step"><span class="install-num">2</span><span>Tap <strong>"Add to Home screen"</strong></span></div>
-      <div class="install-step"><span class="install-num">3</span><span>Tap <strong>"Add"</strong> to confirm</span></div>
-      <div id="install-android-prompt" style="display:none;margin-top:14px;">
-        <button class="auth-btn primary" onclick="installPWA();closeModal('install-modal')">Install Now</button>
-      </div>
-    </div>
-    <div id="install-desktop" style="display:none;">
-      <p style="font-size:14px;color:var(--text-muted);line-height:1.7;margin-bottom:16px;">To install on <strong>desktop</strong>:</p>
-      <div class="install-step"><span class="install-num">1</span><span>Click the <strong>install icon</strong> in your browser's address bar</span></div>
-      <div class="install-step"><span class="install-num">2</span><span>Click <strong>"Install"</strong> to confirm</span></div>
-      <div id="install-desktop-prompt" style="display:none;margin-top:14px;">
-        <button class="auth-btn primary" onclick="installPWA();closeModal('install-modal')">Install Now</button>
-      </div>
-    </div>
-    <div class="modal-actions" style="margin-top:20px;">
-      <button class="modal-btn secondary" onclick="closeModal('install-modal')">Close</button>
-    </div>
-  </div>
-</div>
+
 
 <!-- TASK MODAL -->
 <div id="task-modal" class="modal-overlay" style="display:none">
@@ -1335,8 +1272,6 @@
   </div>
 </div>
 
-<script>
-  if("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
-</script>
+
 </body>
 </html>
