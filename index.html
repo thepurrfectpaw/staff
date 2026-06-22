@@ -323,28 +323,29 @@
 
     async function loadAdminHome(){
       const period=getPeriodId(new Date());
+      const prevStart=new Date(period.start.getTime()-14*86400000);
+      const prevPeriod=getPeriodId(prevStart);
       document.getElementById("admin-period-label").textContent=period.label;
-      try{
-        const q=query(collection(db,"clockEntries"),where("clockOut","!=",null),orderBy("clockOut","desc"));
-        const snap=await getDocs(q);
+
+      await loadAllUsers();
+      const q=query(collection(db,"clockEntries"),where("clockOut","!=",null),orderBy("clockOut","desc"));
+      const snap=await getDocs(q);
+
+      async function buildPeriodSummary(p){
         const byUser={};
         snap.docs.forEach(d=>{
           const data=d.data();
           const co=data.clockOut?.toDate?data.clockOut.toDate():null;
           if(!co) return;
-          if(co>=period.start&&co<=new Date(period.end.getTime()+86400000)){
+          if(co>=p.start&&co<=new Date(p.end.getTime()+86400000)){
             if(!byUser[data.uid]) byUser[data.uid]={name:data.name,totalMs:0};
             byUser[data.uid].totalMs+=data.totalMs||0;
           }
         });
-        await loadAllUsers();
         Object.keys(byUser).forEach(uid=>{ if(allUsers[uid]) byUser[uid].rate=allUsers[uid].hourlyRate||0; });
-
-        const periodSnap=await getDoc(doc(db,"payPeriods",period.id));
+        const periodSnap=await getDoc(doc(db,"payPeriods",p.id));
         const approvedMap=periodSnap.exists()?(periodSnap.data().employees||{}):{};
-
         let grandTotal=0;
-        const el=document.getElementById("admin-home-summary");
         const rows=Object.entries(byUser).map(([uid,data])=>{
           const hrs=parseFloat(hoursFromMs(data.totalMs));
           const total=parseFloat(calcPay(hrs,data.rate||0));
@@ -356,13 +357,35 @@
             <div class="admin-rate">@ $${parseFloat(data.rate||0).toFixed(2)}/hr</div>
             <div class="admin-total">$${total.toFixed(2)}</div>
             ${isApproved
-              ? `<span style="display:flex;align-items:center;gap:6px;"><span class="approved-badge">✓ Approved</span>${TEST_MODE ? `<button class="edit-btn" onclick="unapprovePeriod('${uid}','${period.id}')">Undo</button>` : ""}</span>`
-              : `<button class="approve-btn" onclick="approvePeriod('${uid}','${period.id}',${hrs},${data.rate||0},${total},'${period.label}','${data.name||uid}')">Approve</button>`
+              ? `<span style="display:flex;align-items:center;gap:6px;"><span class="approved-badge">✓ Approved</span>${TEST_MODE?`<button class="edit-btn" onclick="unapprovePeriod('${uid}','${p.id}')">Undo</button>`:""}</span>`
+              : `<button class="approve-btn" onclick="approvePeriod('${uid}','${p.id}',${hrs},${data.rate||0},${total},'${p.label}','${data.name||uid}')">Approve</button>`
             }
           </div>`;
         });
-        el.innerHTML=rows.join("")+`<div class="grand-total-row"><span>Total Owed:</span><span>$${grandTotal.toFixed(2)}</span></div>`;
-      }catch(e){ document.getElementById("admin-home-summary").innerHTML=`<p class="empty-state">No hours this period.</p>`; }
+        return {rows, grandTotal, hasData: rows.length>0};
+      }
+
+      try{
+        const el=document.getElementById("admin-home-summary");
+        const [curr, prev]=await Promise.all([buildPeriodSummary(period), buildPeriodSummary(prevPeriod)]);
+        let html="";
+
+        if(curr.hasData){
+          html+=`<div class="period-section-label">📅 Current: ${period.label}</div>`;
+          html+=curr.rows.join("");
+          html+=`<div class="grand-total-row"><span>Total Owed:</span><span>$${curr.grandTotal.toFixed(2)}</span></div>`;
+        } else {
+          html+=`<div class="period-section-label">📅 Current: ${period.label}</div><p class="empty-state" style="padding:12px 0;">No hours logged yet this period.</p>`;
+        }
+
+        if(prev.hasData){
+          html+=`<div class="period-section-label" style="margin-top:24px;">⏮ Previous: ${prevPeriod.label}</div>`;
+          html+=prev.rows.join("");
+          html+=`<div class="grand-total-row"><span>Total Owed:</span><span>$${prev.grandTotal.toFixed(2)}</span></div>`;
+        }
+
+        el.innerHTML=html||`<p class="empty-state">No hours this period.</p>`;
+      }catch(e){ document.getElementById("admin-home-summary").innerHTML=`<p class="empty-state">Could not load hours.</p>`; }
     }
 
     async function loadAdminEmployees(){
@@ -958,6 +981,8 @@
     .period-chevron{font-size:11px;color:var(--text-muted);}
     .period-group-body{padding:0 16px 8px;}
     .current-badge{background:var(--blue);color:white;font-size:10px;font-weight:800;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:0.5px;}
+
+    .period-section-label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);padding:8px 0 10px;border-bottom:2px solid var(--border);margin-bottom:4px;}
 
     /* MISC */
     .empty-state{text-align:center;color:var(--text-muted);font-size:14px;padding:24px 0;}
