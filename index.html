@@ -487,27 +487,127 @@
         const q=query(collection(db,"clockEntries"),where("clockOut","!=",null),orderBy("clockOut","desc"));
         const snap=await getDocs(q);
         const entries=snap.docs.map(d=>({id:d.id,...d.data()}));
-        entries.sort((a,b)=>(a.name||"").localeCompare(b.name||"")||(b.clockOut?.seconds||0)-(a.clockOut?.seconds||0));
         await loadAllUsers();
         const el=document.getElementById("admin-all-history");
         if(!entries.length){el.innerHTML=`<p class="empty-state">No clock entries yet.</p>`;return;}
-        el.innerHTML=`<div class="entry-header-row"><span>Date</span><span>Employee</span><span>Task</span><span>Hrs</span><span>Pay</span><span></span></div>`+
-        entries.map(e=>{
-          const hrs=hoursFromMs(e.totalMs||0);
-          const rate=allUsers[e.uid]?.hourlyRate||0;
-          return `<div class="entry-row">
-            <div class="entry-date">${fmtDate(e.clockOut)}</div>
-            <div class="entry-task" style="color:var(--text);font-weight:800;">${e.name||"—"}</div>
-            <div class="entry-times">${e.task||"—"}</div>
-            <div class="entry-hours">${hrs} hrs</div>
-            <div class="entry-pay">$${calcPay(hrs,rate)}</div>
-            <div class="entry-actions">
-              <button class="edit-btn" onclick="showEditEntryModal('${e.id}','${e.uid}')">Edit</button>
+
+        // Group by employee → pay period → task
+        const byEmployee={};
+        entries.forEach(e=>{
+          const uid=e.uid||"unknown";
+          const name=e.name||allUsers[uid]?.name||"Unknown";
+          const rate=allUsers[uid]?.hourlyRate||0;
+          const co=e.clockOut?.toDate?e.clockOut.toDate():new Date(e.clockOut);
+          const period=getPeriodId(co);
+          if(!byEmployee[uid]) byEmployee[uid]={name,rate,periods:{}};
+          if(!byEmployee[uid].periods[period.id]) byEmployee[uid].periods[period.id]={label:period.label,tasks:{},totalMs:0};
+          const task=e.task||"Misc";
+          if(!byEmployee[uid].periods[period.id].tasks[task]) byEmployee[uid].periods[period.id].tasks[task]={totalMs:0,entries:[]};
+          byEmployee[uid].periods[period.id].tasks[task].totalMs+=e.totalMs||0;
+          byEmployee[uid].periods[period.id].tasks[task].entries.push(e);
+          byEmployee[uid].periods[period.id].totalMs+=e.totalMs||0;
+        });
+
+        // Sort employees by name
+        const sortedEmps=Object.entries(byEmployee).sort((a,b)=>a[1].name.localeCompare(b[1].name));
+
+        el.innerHTML=sortedEmps.map(([uid,emp])=>{
+          const empTotalMs=Object.values(emp.periods).reduce((s,p)=>s+p.totalMs,0);
+          const empHrs=parseFloat(hoursFromMs(empTotalMs));
+          const empPay=calcPay(empHrs,emp.rate);
+
+          // Sort periods newest first
+          const sortedPeriods=Object.entries(emp.periods).sort((a,b)=>b[0].localeCompare(a[0]));
+          const currentPeriodId=getPeriodId(new Date()).id;
+
+          const periodsHtml=sortedPeriods.map(([pid,pdata])=>{
+            const pHrs=parseFloat(hoursFromMs(pdata.totalMs));
+            const pPay=calcPay(pHrs,emp.rate);
+            const isCurrent=pid===currentPeriodId;
+
+            // Task breakdown
+            const taskRows=Object.entries(pdata.tasks)
+              .sort((a,b)=>b[1].totalMs-a[1].totalMs)
+              .map(([task,tdata])=>{
+                const tHrs=parseFloat(hoursFromMs(tdata.totalMs));
+                const tPct=pdata.totalMs>0?Math.round(tdata.totalMs/pdata.totalMs*100):0;
+                return `<div class="hist-task-row">
+                  <div class="hist-task-name">${task}</div>
+                  <div class="hist-task-bar-wrap"><div class="hist-task-bar" style="width:${tPct}%"></div></div>
+                  <div class="hist-task-hrs">${tHrs.toFixed(2)} hrs</div>
+                  <div class="hist-task-pay">$${calcPay(tHrs,emp.rate)}</div>
+                  <div class="hist-task-pct">${tPct}%</div>
+                </div>`;
+              }).join("");
+
+            // Individual entries
+            const entryRows=pdata.tasks && Object.values(pdata.tasks).flatMap(t=>t.entries)
+              .sort((a,b)=>(b.clockOut?.seconds||0)-(a.clockOut?.seconds||0))
+              .map(e=>{
+                const hrs=hoursFromMs(e.totalMs||0);
+                return `<div class="entry-row" style="grid-template-columns:110px 1fr 1fr 65px 65px 60px;">
+                  <div class="entry-date">${fmtDate(e.clockOut)}</div>
+                  <div class="entry-task">${e.task||"—"}</div>
+                  <div class="entry-times">${fmtTime(e.clockIn)} – ${fmtTime(e.clockOut)}</div>
+                  <div class="entry-hours">${hrs} hrs</div>
+                  <div class="entry-pay">$${calcPay(hrs,emp.rate)}</div>
+                  <div class="entry-actions"><button class="edit-btn" onclick="showEditEntryModal('${e.id}','${uid}')">Edit</button></div>
+                </div>`;
+              }).join("");
+
+            return `<div class="hist-period">
+              <div class="hist-period-header" onclick="toggleHistPeriod('${uid}_${pid}')">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  ${isCurrent?`<span class="current-badge">Current</span>`:""}
+                  <span>${pdata.label}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:16px;font-size:13px;font-weight:700;color:var(--text-muted);">
+                  <span>${pHrs.toFixed(2)} hrs</span>
+                  <span style="color:var(--blue-deeper);font-weight:900;">$${pPay}</span>
+                  <span id="hchev-${uid}_${pid}">▼</span>
+                </div>
+              </div>
+              <div id="hbody-${uid}_${pid}" style="display:none;padding:0 16px 12px;">
+                <div class="hist-task-header">Task Breakdown</div>
+                ${taskRows}
+                <div class="hist-task-header" style="margin-top:14px;">All Entries</div>
+                <div class="entry-header-row" style="grid-template-columns:110px 1fr 1fr 65px 65px 60px;"><span>Date</span><span>Task</span><span>In – Out</span><span>Hrs</span><span>Pay</span><span></span></div>
+                ${entryRows}
+              </div>
+            </div>`;
+          }).join("");
+
+          return `<div class="hist-emp-card">
+            <div class="hist-emp-header" onclick="toggleHistEmp('${uid}')">
+              <div>
+                <div class="hist-emp-name">${emp.name}</div>
+                <div class="hist-emp-sub">All time: ${empHrs.toFixed(2)} hrs · $${empPay}</div>
+              </div>
+              <span class="emp-card-chevron" id="hempchev-${uid}">▼</span>
+            </div>
+            <div id="hempbody-${uid}" style="display:none;">
+              ${periodsHtml}
             </div>
           </div>`;
         }).join("");
+
       }catch(e){ document.getElementById("admin-all-history").innerHTML=`<p class="empty-state">Could not load entries.</p>`; }
     }
+
+    window.toggleHistEmp=(uid)=>{
+      const body=document.getElementById(`hempbody-${uid}`);
+      const chev=document.getElementById(`hempchev-${uid}`);
+      const open=body.style.display==="none";
+      body.style.display=open?"block":"none";
+      chev.textContent=open?"▲":"▼";
+    };
+    window.toggleHistPeriod=(key)=>{
+      const body=document.getElementById(`hbody-${key}`);
+      const chev=document.getElementById(`hchev-${key}`);
+      const open=body.style.display==="none";
+      body.style.display=open?"block":"none";
+      chev.textContent=open?"▲":"▼";
+    };
 
     async function loadAdminPayroll(){
       try{
@@ -982,6 +1082,25 @@
     .period-group-body{padding:0 16px 8px;}
     .current-badge{background:var(--blue);color:white;font-size:10px;font-weight:800;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:0.5px;}
 
+    /* HISTORY CARDS */
+    .hist-emp-card{background:white;border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden;}
+    .hist-emp-header{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;cursor:pointer;transition:background 0.15s;}
+    .hist-emp-header:hover{background:#f8faff;}
+    .hist-emp-name{font-weight:900;font-size:16px;color:var(--text);}
+    .hist-emp-sub{font-size:12px;color:var(--text-muted);margin-top:3px;font-weight:600;}
+    .hist-period{border-top:1px solid var(--border);}
+    .hist-period-header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;cursor:pointer;background:#f8faff;transition:background 0.15s;}
+    .hist-period-header:hover{background:#eef2fb;}
+    .hist-task-header{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);padding:10px 0 6px;border-bottom:1px solid var(--border);margin-bottom:6px;}
+    .hist-task-row{display:grid;grid-template-columns:140px 1fr 65px 65px 40px;gap:8px;align-items:center;padding:6px 0;font-size:13px;border-bottom:1px solid var(--border);}
+    .hist-task-row:last-child{border-bottom:none;}
+    .hist-task-name{font-weight:700;color:var(--blue);}
+    .hist-task-bar-wrap{background:var(--border);border-radius:4px;height:6px;overflow:hidden;}
+    .hist-task-bar{background:var(--blue);height:100%;border-radius:4px;transition:width 0.4s ease;}
+    .hist-task-hrs{font-weight:700;text-align:right;}
+    .hist-task-pay{font-weight:800;color:var(--blue-deeper);text-align:right;}
+    .hist-task-pct{font-size:11px;color:var(--text-muted);text-align:right;}
+
     .period-section-label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);padding:8px 0 10px;border-bottom:2px solid var(--border);margin-bottom:4px;}
 
     /* MISC */
@@ -1004,6 +1123,17 @@
     body.dark .auth-field input,body.dark .modal-select,body.dark .modal-input,body.dark .profile-field input,body.dark .rate-input{background:#0f1624;border-color:var(--border);color:var(--text);}
     body.dark #dark-toggle{background:#16213a;border-color:var(--border);}
     body.dark .period-banner{background:linear-gradient(135deg,#1e3f7a 0%,#0a1020 100%);}
+    body.dark .hist-emp-card{background:#16213a;border:1px solid var(--border);}
+    body.dark .hist-emp-header:hover{background:#1a2840;}
+    body.dark .hist-emp-name{color:var(--text);}
+    body.dark .hist-period{border-color:var(--border);}
+    body.dark .hist-period-header{background:#1a2840;}
+    body.dark .hist-period-header:hover{background:#1e3050;}
+    body.dark .hist-task-bar-wrap{background:#1e2d4a;}
+    body.dark .hist-task-row{border-color:var(--border);}
+    body.dark .hist-task-header{color:var(--text-muted);border-color:var(--border);}
+    body.dark .entry-row{border-color:var(--border);}
+    body.dark .entry-header-row{border-color:var(--border);}
 
     /* MOBILE */
     @media(max-width:600px){
